@@ -105,17 +105,17 @@ We welcome PRs
 
 ## Build 
 
-you must have a golang and docker installed.
+you must have golang and docker installed.
 
-Change the value of `repostory` variable in `deploy/build.sh` by your docker repository. 
-You can also change the semeantic value of `version` variable. 
+Change the value of the `repository` variable in `deploy/build.sh` by your docker repository. 
+You can also change the semeantic value of the `version` variable. 
 
-then to deploy your change and create new deployable image : 
+then to deploy your changes and create a new deployable image : 
 ```
 ./deploy/build.sh
 ```
 
-It will recreate, push and redeploy a new image for the job.
+It will recreate, push and redeploy a new job with the new image.
 
 ## Local development 
 
