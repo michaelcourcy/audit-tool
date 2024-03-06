@@ -2,7 +2,7 @@
 
 ## Goal 
 
-This tool aims to create a quick audit of your backup management on your cluster. 
+Create an audit of your Kasten backup on your cluster. 
 
 ## Features
 
@@ -12,8 +12,8 @@ Coming soon :
 - Is disaster recovery activated 
 - Is immutability activated for policies 
 - Is RBAC applied to let non admin user manage their backups/restore
-- Garbage collector enabled 
-- Workload using blueprints 
+- Is Garbage collector enabled 
+- Are database workloads using blueprints 
 - Licencing checking 
 
 ## Deploy 
@@ -21,11 +21,11 @@ Coming soon :
 You must have Kasten installed on your cluster. We assume that 
 Kasten is installed in the kasten-io namespace under the release k10.
 
-If not you can change those values in the `deploy/job.yaml` you should 
+If not you can change those values in the file `deploy/job.yaml` you should 
 also change the `serviceAccount` and `serviceAccountName` accordingly. 
 
 
-Deploy the audit job to your 
+Deploy the audit job to your cluster 
 ```
 kubectl create -f deploy/job.yaml 
 ```
@@ -116,4 +116,16 @@ then to deploy your change and create new deployable image :
 ```
 
 It will recreate, push and redeploy a new image for the job.
+
+## Local development 
+
+Assuming your context point to your cluster 
+
+```
+cd cmd/audit 
+KASTEN_NAMESPACE=kasten-io \
+KASTEN_RELEASE=k10 \
+go run main.go
+```
+
 
