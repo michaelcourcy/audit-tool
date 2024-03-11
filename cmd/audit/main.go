@@ -9,8 +9,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"k8s.io/client-go/rest"
 
-	v1alpha1 "github.com/michaelcourcy/audit-tool/pkg/action"
+	"github.com/michaelcourcy/audit-tool/pkg/action"
 	"github.com/michaelcourcy/audit-tool/pkg/client"
+	"github.com/michaelcourcy/audit-tool/pkg/profile"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -45,11 +46,63 @@ func main() {
 		panic(err)
 	}
 
+	profileClient, err := client.ProfileClient(config)
+	if err != nil {
+		panic(err)
+	}
+
+	profilesAudit(profileClient, kastenNamespace)
+
 	namespacesWithPVCs := rpoForNamespaceWithPVC(corev1Client, actionClient, kastenNamespace)
 
 	rpoForNamespaceWithoutPVC(corev1Client, actionClient, namespacesWithPVCs)
 
 	clusterInfo(corev1Client)
+
+}
+
+func profilesAudit(profileClient *rest.RESTClient, kastenNamespace string) {
+
+	fmt.Println("")
+	fmt.Println("=================")
+	fmt.Println("Auditing profiles")
+	fmt.Println("=================")
+
+	result := profile.ProfileList{}
+	err := profileClient.
+		Get().
+		Resource("profiles").Namespace(kastenNamespace).
+		Do(context.TODO()).
+		Into(&result)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		if len(result.Items) == 0 {
+			fmt.Println("  -> WARNING !! there is no profile at all, you don't have real backup ")
+			return
+		}
+		foundLocationProfile := false
+		foundImmutable := false
+		for _, profileInKasten := range result.Items {
+			if profileInKasten.Spec.Type == "Location" {
+				foundLocationProfile = true
+				if profileInKasten.Spec.LocationSpec.Location.LocationType == "ObjectStore" {
+					if profileInKasten.Spec.LocationSpec.Location.ObjectStore.ProtectionPeriod != "" {
+						foundImmutable = true
+					}
+				}
+			}
+			if profileInKasten.Status.Validation != "Success" {
+				fmt.Printf("  --> WARNING !! found profile %s which is not valid\n", profileInKasten.Name)
+			}
+		}
+		if !foundLocationProfile {
+			fmt.Println("  --> WARNING !! there is no location profile at all, you don't have real backup ")
+		}
+		if !foundImmutable {
+			fmt.Println("  --> WARNING !! there is no immutable profile your are not protected against Ransomware ")
+		}
+	}
 
 }
 
@@ -94,6 +147,17 @@ func rpoForNamespaceWithoutPVC(corev1Client *kubernetes.Clientset, actionClient 
 	log.WithFields(log.Fields{
 		"namespacesWithoutPVCs": namespacesWithoutPVCs,
 	}).Info("namespace without pvcs")
+
+	fmt.Println("")
+	fmt.Println("======================")
+	fmt.Println("Namespaces without PVC")
+	fmt.Println("======================")
+
+	for _, namespace := range namespacesWithoutPVCs {
+		fmt.Printf("%s has no PVC\n", namespace)
+		rpo(namespace, actionClient)
+	}
+
 }
 
 func rpoForNamespaceWithPVC(corev1Client *kubernetes.Clientset, actionClient *rest.RESTClient, kastenNamespace string) map[string][]string {
@@ -127,46 +191,49 @@ func rpoForNamespaceWithPVC(corev1Client *kubernetes.Clientset, actionClient *re
 			continue
 		}
 		fmt.Printf("%s has %d PVCs\n", namespace, len(pvcs))
-		result := v1alpha1.BackupActionList{}
-		err = actionClient.
-			Get().
-			Resource("backupactions").Namespace(namespace).
-			Do(context.TODO()).
-			Into(&result)
-		if err != nil {
-			fmt.Println(err)
-		} else {
-			if len(result.Items) == 0 {
-				fmt.Printf("  --> No backupactions in namespace %s \n", namespace)
-			} else {
-				padding := "  %-30s %-10s %-30s %-30s \n"
-
-				first := true
-				completeBackupAction := false
-				var rpoMessage string
-				fmt.Printf(padding, "BACKUPACTION", "STATE", "START", "STOP")
-				for _, backupAction := range result.Items {
-					if first && backupAction.Status.State == "Complete" {
-						first = false
-						completeBackupAction = true
-						now := time.Now()
-						rpoDuration := now.Sub(backupAction.Status.EndTime)
-						days := int64(rpoDuration.Hours() / 24)
-						hours := int64(rpoDuration.Hours()) % 24
-						rpoMessage = fmt.Sprintf("  --> The last RPO is %d days and %d hours", days, hours)
-					}
-					fmt.Printf(padding, backupAction.Name, backupAction.Status.State, backupAction.CreationTimestamp, backupAction.Status.EndTime)
-				}
-				if !completeBackupAction {
-					fmt.Println("  --> WARNING !! It seems that no backupaction were successful")
-				} else {
-					fmt.Println(rpoMessage)
-				}
-
-			}
-		}
+		rpo(namespace, actionClient)
 	}
 	return namespacesWithPVCs
+}
+
+func rpo(namespace string, actionClient *rest.RESTClient) {
+	result := action.BackupActionList{}
+	err := actionClient.
+		Get().
+		Resource("backupactions").Namespace(namespace).
+		Do(context.TODO()).
+		Into(&result)
+	if err != nil {
+		fmt.Println(err)
+	} else {
+		if len(result.Items) == 0 {
+			fmt.Printf("  --> No backupactions in namespace %s \n", namespace)
+		} else {
+			padding := "  %-30s %-10s %-30s %-30s \n"
+			first := true
+			completeBackupAction := false
+			var rpoMessage string
+			fmt.Printf(padding, "BACKUPACTION", "STATE", "START", "STOP")
+			for _, backupAction := range result.Items {
+				if first && backupAction.Status.State == "Complete" {
+					first = false
+					completeBackupAction = true
+					now := time.Now()
+					rpoDuration := now.Sub(backupAction.Status.EndTime)
+					days := int64(rpoDuration.Hours() / 24)
+					hours := int64(rpoDuration.Hours()) % 24
+					rpoMessage = fmt.Sprintf("  --> The last RPO is %d days and %d hours", days, hours)
+				}
+				fmt.Printf(padding, backupAction.Name, backupAction.Status.State, backupAction.CreationTimestamp, backupAction.Status.EndTime)
+			}
+			if !completeBackupAction {
+				fmt.Println("  --> WARNING !! It seems that no backupaction were successful")
+			} else {
+				fmt.Println(rpoMessage)
+			}
+
+		}
+	}
 }
 
 func getKastenNamespaceAndRelease() (string, string) {

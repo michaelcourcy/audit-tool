@@ -3,7 +3,8 @@ package client
 import (
 	"fmt"
 
-	v1alpha1 "github.com/michaelcourcy/audit-tool/pkg/action"
+	action "github.com/michaelcourcy/audit-tool/pkg/action"
+	"github.com/michaelcourcy/audit-tool/pkg/profile"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -39,9 +40,20 @@ func Config() (*rest.Config, error) {
 }
 
 func ActionClient(config *rest.Config) (*rest.RESTClient, error) {
-	v1alpha1.AddToScheme(scheme.Scheme)
+	action.AddToScheme(scheme.Scheme)
 	apiConfig := *config
-	apiConfig.ContentConfig.GroupVersion = &schema.GroupVersion{Group: v1alpha1.GroupName, Version: v1alpha1.GroupVersion}
+	apiConfig.ContentConfig.GroupVersion = &schema.GroupVersion{Group: action.GroupName, Version: action.GroupVersion}
+	apiConfig.APIPath = "/apis"
+	apiConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme)
+	apiConfig.UserAgent = rest.DefaultKubernetesUserAgent()
+
+	return rest.UnversionedRESTClientFor(&apiConfig)
+}
+
+func ProfileClient(config *rest.Config) (*rest.RESTClient, error) {
+	profile.AddToScheme(scheme.Scheme)
+	apiConfig := *config
+	apiConfig.ContentConfig.GroupVersion = &schema.GroupVersion{Group: profile.GroupName, Version: profile.GroupVersion}
 	apiConfig.APIPath = "/apis"
 	apiConfig.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme)
 	apiConfig.UserAgent = rest.DefaultKubernetesUserAgent()

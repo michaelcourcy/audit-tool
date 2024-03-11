@@ -1,4 +1,4 @@
-package action
+package profile
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-const GroupName = "actions.kio.kasten.io"
+const GroupName = "config.kio.kasten.io"
 const GroupVersion = "v1alpha1"
 
 var SchemeGroupVersion = schema.GroupVersion{Group: GroupName, Version: GroupVersion}
@@ -18,8 +18,8 @@ var (
 
 func addKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
-		&BackupAction{},
-		&BackupActionList{},
+		&Profile{},
+		&ProfileList{},
 	)
 
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
