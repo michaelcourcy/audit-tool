@@ -6,11 +6,15 @@ Create an audit of your Kasten backup on your cluster.
 
 ## Features
 
+- Analysing profiles 
+  - Detect no profiles and no location profiles 
+  - Detect profile not valid 
+  - Detect no profile with immutability
 - Give a RPO for each of your namespaces starting by namespaces having PVC 
+- Give a RPO for each of your namespaces starting by namespaces not having PVC 
 
 Coming soon :
 - Is disaster recovery activated 
-- Is immutability activated for policies 
 - Is RBAC applied to let non admin user manage their backups/restore
 - Is Garbage collector enabled 
 - Are database workloads using blueprints 
