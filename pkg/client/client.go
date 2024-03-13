@@ -5,6 +5,9 @@ import (
 
 	action "github.com/michaelcourcy/audit-tool/pkg/action"
 	"github.com/michaelcourcy/audit-tool/pkg/profile"
+	helm "github.com/mittwald/go-helm-client"
+	log "github.com/sirupsen/logrus"
+	"k8s.io/client-go/discovery"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -59,4 +62,25 @@ func ProfileClient(config *rest.Config) (*rest.RESTClient, error) {
 	apiConfig.UserAgent = rest.DefaultKubernetesUserAgent()
 
 	return rest.UnversionedRESTClientFor(&apiConfig)
+}
+
+func HelmClient(config *rest.Config, kastenNamespace string) (helm.Client, error) {
+	opt := &helm.RestConfClientOptions{
+		Options: &helm.Options{
+			Namespace:        kastenNamespace,
+			RepositoryCache:  "/tmp/.helmcache",
+			RepositoryConfig: "/tmp/.helmrepo",
+			Debug:            false,
+			Linting:          false,
+			DebugLog: func(format string, v ...interface{}) {
+				log.Debugf(format, v...)
+			},
+		},
+		RestConfig: config,
+	}
+	return helm.NewClientFromRestConf(opt)
+}
+
+func DiscoveryClient(config *rest.Config) (*discovery.DiscoveryClient, error) {
+	return discovery.NewDiscoveryClientForConfig(config)
 }

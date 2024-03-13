@@ -1,6 +1,5 @@
 #!/bin/bash
 set -euxo pipefail
-cd `dirname $0`/
 
 # use your own repo  
 repository=michaelcourcy
@@ -18,7 +17,8 @@ docker build --platform=linux/amd64 -t $repository/audit-tool:$version-amd64 .
 docker push $repository/audit-tool:$version-amd64
 rm audit
 
-cd `dirname $0`/
+
+cd ../../deploy
 cat<<EOF > job.yaml
 apiVersion: batch/v1
 kind: Job

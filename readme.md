@@ -6,6 +6,8 @@ Create an audit of your Kasten backup on your cluster.
 
 ## Features
 
+- Check Kubernetes installation 
+- Check Kasten installation 
 - Analysing profiles 
   - Detect no profiles and no location profiles 
   - Detect profile not valid 

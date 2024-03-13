@@ -10,7 +10,7 @@ spec:
       serviceAccountName: k10-k10
       containers:
       - name: audit-tool
-        image: michaelcourcy/audit-tool:0.0.13-amd64
+        image: michaelcourcy/audit-tool:0.0.17-amd64
         command: ["/audit"]
         env: 
         - name: KASTEN_NAMESPACE 

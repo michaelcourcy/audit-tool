@@ -6,13 +6,16 @@ import (
 	"os"
 	"time"
 
+	helm "github.com/mittwald/go-helm-client"
 	log "github.com/sirupsen/logrus"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 
 	"github.com/michaelcourcy/audit-tool/pkg/action"
 	"github.com/michaelcourcy/audit-tool/pkg/client"
 	"github.com/michaelcourcy/audit-tool/pkg/profile"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -31,8 +34,8 @@ func init() {
 
 func main() {
 	kastenNamespace, kastenRelease := getKastenNamespaceAndRelease()
-	fmt.Printf("Kasten is installed in %s under the release %s \n", kastenNamespace, kastenRelease)
 
+	// create the necessary client
 	config, err := client.Config()
 	if err != nil {
 		panic(err.Error())
@@ -41,6 +44,7 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
+
 	actionClient, err := client.ActionClient(config)
 	if err != nil {
 		panic(err)
@@ -51,17 +55,85 @@ func main() {
 		panic(err)
 	}
 
-	profilesAudit(profileClient, kastenNamespace)
+	discoveryClient, err := client.DiscoveryClient(config)
+	if err != nil {
+		panic(err)
+	}
 
-	namespacesWithPVCs := rpoForNamespaceWithPVC(corev1Client, actionClient, kastenNamespace)
+	helmClient, err := client.HelmClient(config, kastenNamespace)
+	if err != nil {
+		panic(err)
+	}
 
-	rpoForNamespaceWithoutPVC(corev1Client, actionClient, namespacesWithPVCs)
+	err = clusterInfo(corev1Client, discoveryClient)
+	if err != nil {
+		panic(err)
+	}
 
-	clusterInfo(corev1Client)
+	// audits
+	err = checkKastenInstall(corev1Client, kastenNamespace, kastenRelease, helmClient)
+	if err != nil {
+		panic(err)
+	}
+
+	err = profilesAudit(profileClient, kastenNamespace)
+	if err != nil {
+		panic(err)
+	}
+
+	namespacesWithPVCs, err := rpoForNamespaceWithPVC(corev1Client, actionClient, kastenNamespace)
+	if err != nil {
+		panic(err)
+	}
+
+	err = rpoForNamespaceWithoutPVC(corev1Client, actionClient, namespacesWithPVCs)
+	if err != nil {
+		panic(err)
+	}
 
 }
 
-func profilesAudit(profileClient *rest.RESTClient, kastenNamespace string) {
+func checkKastenInstall(corev1Client *kubernetes.Clientset, kastenNamespace string, kastenRelease string, helmClient helm.Client) error {
+	fmt.Println("")
+	fmt.Println("=======================")
+	fmt.Println("Checking Kasten install")
+	fmt.Println("=======================")
+	fmt.Printf("  checking if Kasten is installed in namespace %s under the release %s \n", kastenNamespace, kastenRelease)
+	//ns kasten exist
+	_, err := corev1Client.CoreV1().Namespaces().Get(context.TODO(), kastenNamespace, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		fmt.Printf("  --> WARNING !! %s namespace not found, kasten is maybe installed in another namespace \n", kastenNamespace)
+		return fmt.Errorf("%s namespace not found, kasten is maybe installed in another namespace", kastenNamespace)
+	}
+	//release exist
+	release, err := helmClient.GetRelease(kastenRelease)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  The version of kasten is %s \n", release.Chart.Metadata.AppVersion)
+	//all pods healthy
+	results, err := corev1Client.CoreV1().Pods(kastenNamespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	podsInError := false
+	for _, pod := range results.Items {
+		for _, c := range pod.Status.ContainerStatuses {
+			if c.State.Waiting != nil && c.State.Waiting.Reason == "CrashLoopBackOff" {
+				podsInError = true
+				fmt.Printf("  pod %s is in error: %s\n", pod.ObjectMeta.Name, pod.Status.Phase)
+			}
+		}
+	}
+	if podsInError {
+		fmt.Printf("  --> WARNING !! some pods in the kasten namespace %s are on error \n", kastenNamespace)
+	} else {
+		fmt.Printf("  --> No pods in the kasten namespace %s are on error \n", kastenNamespace)
+	}
+	return nil
+}
+
+func profilesAudit(profileClient *rest.RESTClient, kastenNamespace string) error {
 
 	fmt.Println("")
 	fmt.Println("=================")
@@ -75,11 +147,11 @@ func profilesAudit(profileClient *rest.RESTClient, kastenNamespace string) {
 		Do(context.TODO()).
 		Into(&result)
 	if err != nil {
-		fmt.Println(err)
+		return err
 	} else {
 		if len(result.Items) == 0 {
 			fmt.Println("  -> WARNING !! there is no profile at all, you don't have real backup ")
-			return
+			return nil
 		}
 		foundLocationProfile := false
 		foundImmutable := false
@@ -98,44 +170,57 @@ func profilesAudit(profileClient *rest.RESTClient, kastenNamespace string) {
 		}
 		if !foundLocationProfile {
 			fmt.Println("  --> WARNING !! there is no location profile at all, you don't have real backup ")
+		} else {
+			fmt.Println("  At least one location profile was found")
 		}
-		if !foundImmutable {
+		if foundLocationProfile && !foundImmutable {
 			fmt.Println("  --> WARNING !! there is no immutable profile your are not protected against Ransomware ")
 		}
 	}
-
+	return nil
 }
 
-func clusterInfo(corev1Client *kubernetes.Clientset) {
+func clusterInfo(corev1Client *kubernetes.Clientset, discoveryClient *discovery.DiscoveryClient) error {
 	fmt.Println("")
 	fmt.Println("=============================")
 	fmt.Println("Information about the cluster")
 	fmt.Println("=============================")
+	information, err := discoveryClient.ServerVersion()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  Kubernetes version : %s.%s \n", information.Major, information.Minor)
+	fmt.Printf("  Platform : %s \n", information.Platform)
+
 	nodes, err := corev1Client.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		return err
 	}
 	numNodes := len(nodes.Items)
-	fmt.Printf("There are %d nodes in this cluster, looking for nodes in error\n", numNodes)
+	fmt.Printf("  There are %d nodes in this cluster, looking for nodes in error\n", numNodes)
 	nodeInError := false
 	for _, node := range nodes.Items {
 		for _, condition := range node.Status.Conditions {
 			if condition.Type == v1.NodeReady && condition.Status != v1.ConditionTrue {
 				nodeInError = true
-				fmt.Printf("NodName: %s, Condition type: %s %s", node.Name, condition.Type, condition.Status)
+				fmt.Printf("  NodName: %s, Condition type: %s %s", node.Name, condition.Type, condition.Status)
 			}
 		}
 	}
 	if !nodeInError {
-		fmt.Printf("No nodes are in error\n")
+		fmt.Printf("  --> No nodes are in error\n")
+	} else {
+		fmt.Printf("  --> Some nodes are in error\n")
 	}
+
+	return nil
 }
 
-func rpoForNamespaceWithoutPVC(corev1Client *kubernetes.Clientset, actionClient *rest.RESTClient, namespacesWithPVCs map[string][]string) {
+func rpoForNamespaceWithoutPVC(corev1Client *kubernetes.Clientset, actionClient *rest.RESTClient, namespacesWithPVCs map[string][]string) error {
 	var namespacesWithoutPVCs []string
 	namespaces, err := corev1Client.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		return err
 	}
 	for _, namespace := range namespaces.Items {
 		_, ok := namespacesWithPVCs[namespace.Name]
@@ -157,14 +242,14 @@ func rpoForNamespaceWithoutPVC(corev1Client *kubernetes.Clientset, actionClient 
 		fmt.Printf("%s has no PVC\n", namespace)
 		rpo(namespace, actionClient)
 	}
-
+	return nil
 }
 
-func rpoForNamespaceWithPVC(corev1Client *kubernetes.Clientset, actionClient *rest.RESTClient, kastenNamespace string) map[string][]string {
+func rpoForNamespaceWithPVC(corev1Client *kubernetes.Clientset, actionClient *rest.RESTClient, kastenNamespace string) (map[string][]string, error) {
 	//list all namespaces that has pvc
 	pvcs, err := corev1Client.CoreV1().PersistentVolumeClaims("").List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		return map[string][]string{}, err
 	}
 	namespacesWithPVCs := make(map[string][]string)
 	for _, pvc := range pvcs.Items {
@@ -193,10 +278,10 @@ func rpoForNamespaceWithPVC(corev1Client *kubernetes.Clientset, actionClient *re
 		fmt.Printf("%s has %d PVCs\n", namespace, len(pvcs))
 		rpo(namespace, actionClient)
 	}
-	return namespacesWithPVCs
+	return namespacesWithPVCs, nil
 }
 
-func rpo(namespace string, actionClient *rest.RESTClient) {
+func rpo(namespace string, actionClient *rest.RESTClient) error {
 	result := action.BackupActionList{}
 	err := actionClient.
 		Get().
@@ -204,7 +289,7 @@ func rpo(namespace string, actionClient *rest.RESTClient) {
 		Do(context.TODO()).
 		Into(&result)
 	if err != nil {
-		fmt.Println(err)
+		return err
 	} else {
 		if len(result.Items) == 0 {
 			fmt.Printf("  --> No backupactions in namespace %s \n", namespace)
@@ -234,6 +319,7 @@ func rpo(namespace string, actionClient *rest.RESTClient) {
 
 		}
 	}
+	return nil
 }
 
 func getKastenNamespaceAndRelease() (string, string) {
